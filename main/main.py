@@ -353,6 +353,11 @@ time_preprocessor = ColumnTransformer(
     ]
 )
 
+# Logistic Regression is intentionally chosen for the ablation study because its simplicity makes 
+# it sensitive to the addition of new features. ROC-AUC is used as the primary metric since it 
+# evaluates ranking quality independently of classification thresholds and is suitable for 
+# imbalanced data. The goal is not to optimize performance but to isolate and test the 
+# predictive contribution of time-related features
 time_pipeline = Pipeline(steps=[
     ("preprocessor", time_preprocessor),
     ("model", LogisticRegression(max_iter=1000, class_weight="balanced"))
