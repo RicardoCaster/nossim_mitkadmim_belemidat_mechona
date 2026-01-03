@@ -18,6 +18,15 @@
 # 6. Perform a clean ablation study on time-based features
 # ============================================================
 
+# This note serves as a brief introduction to the code.
+# The project was developed based on the material taught in class, complemented by
+# independent study using online resources. During the development process, large
+# language models were used for every line of code as supportive tools (including ChatGPT and Gemini) through
+# iteration and comparison, helping to improve code organization, clarity of comments,
+# and the overall reasoning behind modeling choices. Final decisions, structure, and
+# understanding remain the result of my own learning and implementation.
+
+
 print("\n================ STARTING PROJECT =================\n")
 
 # ============================================================
@@ -145,16 +154,21 @@ print("Step 5: Building preprocessing pipeline...\n")
 # - Numerical variables are scaled → StandardScaler
 # - Missing values are handled safely
 
+# pipeline for numeric features to handle missing values and scale them.
 numeric_transformer = Pipeline(steps=[
-    ("imputer", SimpleImputer(strategy="median")),
-    ("scaler", StandardScaler())
+    ("imputer", SimpleImputer(strategy="median")),  # Replace missing numeric values (NaNs) with the median of the column. Median is robust to outliers (better than mean if there are extreme values).
+    ("scaler", StandardScaler())  # StandardScaler transforms numeric values to have mean=0 and std=1. Some models (like SVM, KNN) are sensitive to scale.
 ])
 
+# pipeline for categorical features to handle missing values and convert categories to numbers.
 categorical_transformer = Pipeline(steps=[
-    ("imputer", SimpleImputer(strategy="constant", fill_value="missing")),
-    ("onehot", OneHotEncoder(handle_unknown="ignore"))
+    ("imputer", SimpleImputer(strategy="constant", fill_value="missing")),  # Fill missing categorical values with a constant string "missing".
+# One-Hot Encoding: Convert categorical variables into binary columns (0/1) for each category.
+# "vehicle_type" = ["Taxi", "Bus", "Ambulance"] → becomes 3 columns: vehicle_type_Taxi, vehicle_type_Bus, vehicle_type_Ambulance (1 where it matches, 0 otherwise)        
+    ("onehot", OneHotEncoder(handle_unknown="ignore"))  # handle_unknown="ignore" → if new category appears in test data, it won’t crash the model.
 ])
 
+# ColumnTransformer applies different preprocessing pipelines to different columns, allowing us to handle numeric and categorical features separately in one step.
 preprocessor = ColumnTransformer(
     transformers=[
         ("num", numeric_transformer, numerical_features),
@@ -168,12 +182,13 @@ preprocessor = ColumnTransformer(
 
 print("Step 6: Splitting data into train and test sets...\n")
 
-# Stratification preserves class imbalance in both sets
+# Split the dataset into Training set (to train the models) and Test set (never seen during training, used only for final evaluation)
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y,
-    test_size=0.2,
-    random_state=42,
-    stratify=y
+    X,    # feature matrix
+    y,    # target vector
+    test_size=0.2,    # 20% of the data used for testing
+    random_state=42,  # fixed seed for reproducibility
+    stratify=y   # ensures that the class distribution (Passed / Failed) remains similar in both train and test sets (VERY important when the dataset is imbalanced).
 )
 
 print("Train size:", X_train.shape[0])
@@ -185,17 +200,16 @@ print("Test size:", X_test.shape[0], "\n")
 
 print("Step 7: Training supervised models...\n")
 
-# Each model captures patterns differently.
-# Using multiple models increases robustness and insight.
+# Define multiple supervised learning models.
 models = {
-    "Logistic Regression": LogisticRegression(max_iter=1000, class_weight="balanced"),
+    "Logistic Regression": LogisticRegression(max_iter=1000, class_weight="balanced"), #balanced automatically gives more weight to the minority class, forcing the model to care about it. We set this because PASSED is much more common than FAILED (typical in many real datasets), models can “cheat” by predicting PASSED all the time.
     "Random Forest": RandomForestClassifier(n_estimators=200, random_state=42, class_weight="balanced"),
     "XGBoost": XGBClassifier(eval_metric="logloss", random_state=42),
-    "SVM": SVC(probability=True, class_weight="balanced", random_state=42),
-    "KNN": KNeighborsClassifier(n_neighbors=7)
+    "SVM": SVC(probability=True, class_weight="balanced", random_state=42), # probability=True enables probability outputs(needed for ROC/AUC);
+    "KNN": KNeighborsClassifier(n_neighbors=7)   # number of nearest neighbors : Looks at the 7 most similar inspections, if most neighbors failed → predict FAILED
 }
 
-results = []
+results = []   # This list will store evaluation results for all models
 
 for name, model in models.items():
     print(f"\n--- Training {name} ---")
@@ -205,27 +219,20 @@ for name, model in models.items():
         ("model", model)
     ])
 
-    pipeline.fit(X_train, y_train)
+    pipeline.fit(X_train, y_train)   # Train the model using the training data
 
-    y_pred = pipeline.predict(X_test)
-    y_prob = pipeline.predict_proba(X_test)[:, 1]
+    y_pred = pipeline.predict(X_test)   # Predict final class labels (0 or 1)
+    y_prob = pipeline.predict_proba(X_test)[:, 1]   # Predict probabilities for the positive class (Failed = 1) (needed for ROC-AUC and PR-AUC)
 
-    # Metric meanings:
-    # Accuracy → overall correctness (can be misleading in imbalance)
-    # Precision → reliability of failure predictions
-    # Recall → ability to catch failures (most important here)
-    # F1 → balance between precision & recall
-    # ROC-AUC → quality of ranking, threshold independent
-    # PR-AUC → best metric for imbalanced datasets
-
-    acc = accuracy_score(y_test, y_pred)
-    prec = precision_score(y_test, y_pred)
-    rec = recall_score(y_test, y_pred)
-    f1 = f1_score(y_test, y_pred)
-    roc = roc_auc_score(y_test, y_prob)
+    # Model evaluation metrics
+    acc = accuracy_score(y_test, y_pred)   # How often am I correct overall?
+    prec = precision_score(y_test, y_pred) # When I predict FAILED, how often am I right? (few false alarms, important if inspections are expensive)
+    rec = recall_score(y_test, y_pred)     # Of all real FAILED inspections, how many did I catch? (most important here - few missed failures)
+    f1 = f1_score(y_test, y_pred)          # Balance between precision and recall (Useful when you need both: not too many false alarms AND not too many missed failures)
+    roc = roc_auc_score(y_test, y_prob)    # How well the model ranks failures above passes across all thresholds (shows trade-off between catching failures and raising false alarms)
 
     p, r, _ = precision_recall_curve(y_test, y_prob)
-    pr_auc = auc(r, p)
+    pr_auc = auc(r, p)                     # how good the model is at ranking FAILED above PASSED (good metric for imbalanced datasets)
 
     print(f"Accuracy: {acc:.3f}")
     print(f"Precision: {prec:.3f}")
@@ -255,14 +262,20 @@ print(results_df.sort_values("roc_auc", ascending=False))
 
 print("\nStep 9: Unsupervised learning – K-Means clustering...\n")
 
-# Clustering finds structure WITHOUT using the inspection result.
-# This helps discover hidden risk profiles.
+# Clustering finds structure WITHOUT using the inspection result(PASSED/FAILED).
+# This helps discover hidden risk profiles based only on features.
 
 X_processed = preprocessor.fit_transform(X)
 
+# Initialize K-Means with 4 clusters
+# n_init=10 runs the algorithm multiple times to avoid poor random initialization
+# random_state ensures reproducible clustering
 kmeans = KMeans(n_clusters=4, random_state=42, n_init=10)
+# Assign each observation to a cluster (0, 1, 2, or 3)
 df["cluster"] = kmeans.fit_predict(X_processed)
 
+# Analyze clusters by checking the average failure rate in each one
+# This helps interpret which clusters represent higher-risk profiles
 print("Average failure rate per cluster:")
 print(df.groupby("cluster")["target"].mean(), "\n")
 
@@ -285,12 +298,16 @@ print("\nStep 10: Anomaly detection using Isolation Forest...\n")
 # Isolation Forest isolates rare and unusual patterns.
 # These can represent suspicious or exceptional vehicles.
 
+# contamination=0.02 assumes that about 2% of observations are anomalies
 iso = IsolationForest(contamination=0.02, random_state=42)
+# Predict anomalies: 1 = normal observation, -1 = anomaly
 df["anomaly"] = iso.fit_predict(X_processed)
 
+# Show how many anomalies were detected
 print("Anomaly distribution (-1 = anomaly):")
 print(df["anomaly"].value_counts(), "\n")
 
+# Display a few anomalous observations to inspect their characteristics
 print("Sample anomalies:")
 print(df[df["anomaly"] == -1][
     ["Public Vehicle Type", "Vehicle Make", "vehicle_age", "Result"]
@@ -301,6 +318,14 @@ print(df[df["anomaly"] == -1][
 # ============================================================
 
 print("\nStep 11: Ablation study – including time features (comparison only)...\n")
+
+# My hypothesis:
+# “Maybe inspections scheduled at certain times are more likely to fail.” 
+# Examples we might expect:
+ #inspections early in the morning / late in the day
+ #inspections at the end of the month
+ #inspections at the end of the year
+#This section checks if that intuition is true or false.
 
 print(
     "This section is NOT part of the final model.\n"
@@ -337,15 +362,9 @@ time_pipeline.fit(X_train_t, y_train_t)
 roc_time = roc_auc_score(y_test_t, time_pipeline.predict_proba(X_test_t)[:, 1])
 
 print(f"ROC-AUC WITH time features: {roc_time:.3f}")
-print("Conclusion: Timing features do NOT meaningfully improve performance.")
 
 # ============================================================
 # FINAL MESSAGE
 # ============================================================
 
 print("\n================ PROJECT COMPLETED SUCCESSFULLY ================\n")
-print(
-    "Final conclusion:\n"
-    "- Vehicle and organization features explain inspection outcomes\n"
-    "- Time scheduling features add no real predictive value\n"
-)
